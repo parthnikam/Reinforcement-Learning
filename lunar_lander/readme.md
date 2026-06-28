@@ -1,8 +1,27 @@
 # Lunar Lander RL Agent
 
 
+```
 pip install gymnasium
 pip install tqdm
+```
+
+
+## Action Space
+```
+0: do nothing
+1: fire left orientation engine
+2: fire main engine
+3: fire right orientation engine
+```
+
+
+## Observation Space: 
+
+```Box([ -2.5 -2.5 -10. -10. -6.2831855 -10. -0. -0. ], [ 2.5 2.5 10. 10. 6.2831855 10. 1. 1. ], (8,), float32)```
+
+The state is an 8-dimensional vector: the coordinates of the lander in x & y, its linear velocities in x & y, its angle, its angular velocity, and two booleans that represent whether each leg is in contact with the ground or not.
+
 
 
 ## Play LunarLander yourself
