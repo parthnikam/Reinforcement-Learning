@@ -1,4 +1,6 @@
+import pickle
 from collections import defaultdict
+from pathlib import Path
 
 import numpy as np
 
@@ -29,12 +31,16 @@ class GridWorldAgent:
         self.episode_rewards = []
         self.episode_td_errors = []
 
+    def _new_q_table(self):
+        return defaultdict(lambda: np.zeros(self.env.action_space.n, dtype=np.float32))
+
     @staticmethod
     def state_to_key(observation: dict) -> tuple[int, ...]:
+        layout_id = (int(observation["layout_id"]),)
         agent_pos = tuple(int(x) for x in observation["agent"])
         target_pos = tuple(int(x) for x in observation["target"])
         bonuses = tuple(int(x) for x in observation["bonuses"])
-        return agent_pos + target_pos + bonuses
+        return layout_id + agent_pos + target_pos + bonuses
 
     def get_action(self, state: tuple[int, ...], greedy: bool = False) -> int:
         if not greedy and np.random.random() < self.epsilon:
@@ -58,3 +64,39 @@ class GridWorldAgent:
 
     def decay_epsilon(self):
         self.epsilon = max(self.final_epsilon, self.epsilon * self.epsilon_decay)
+
+    def save(self, path: str | Path) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "q_table": dict(self.q_table),
+            "epsilon": self.epsilon,
+            "episode_rewards": self.episode_rewards,
+            "episode_td_errors": self.episode_td_errors,
+            "learning_rate": self.learning_rate,
+            "discount_factor": self.discount_factor,
+            "epsilon_decay": self.epsilon_decay,
+            "final_epsilon": self.final_epsilon,
+        }
+        with path.open("wb") as file:
+            pickle.dump(payload, file)
+
+    def load(self, path: str | Path) -> bool:
+        path = Path(path)
+        if not path.exists():
+            return False
+
+        with path.open("rb") as file:
+            payload = pickle.load(file)
+
+        self.q_table = self._new_q_table()
+        for state, values in payload.get("q_table", {}).items():
+            self.q_table[state] = np.asarray(values, dtype=np.float32)
+
+        self.epsilon = max(
+            self.final_epsilon,
+            float(payload.get("epsilon", self.epsilon)),
+        )
+        self.episode_rewards = list(payload.get("episode_rewards", []))
+        self.episode_td_errors = list(payload.get("episode_td_errors", []))
+        return True

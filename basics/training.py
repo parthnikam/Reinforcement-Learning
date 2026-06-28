@@ -20,7 +20,12 @@ def train_gridworld(
 ) -> None:
     progress = trange(1, n_episodes + 1, desc="Training", unit="episode")
     for episode in progress:
-        observation, info = env.reset()
+        layout_count = len(getattr(env, "layouts", []))
+        reset_options = None
+        if layout_count:
+            reset_options = {"layout_id": (episode - 1) % layout_count}
+
+        observation, info = env.reset(options=reset_options)
         state = agent.state_to_key(observation)
         episode_reward = 0.0
         episode_tds = []
@@ -56,10 +61,15 @@ def run_visual_demo(
     episodes: int = 3,
     delay: float = 0.3,
     max_steps: int = 50,
+    layout_id: int | None = None,
 ) -> None:
     print("\nRunning CLI GridWorld with greedy policy:\n")
     for demo_idx in range(1, episodes + 1):
-        observation, info = env.reset()
+        reset_options = None
+        if layout_id is not None:
+            reset_options = {"layout_id": layout_id}
+
+        observation, info = env.reset(options=reset_options)
         state = agent.state_to_key(observation)
         total_reward = 0.0
         env.render(total_reward=total_reward, step=0, clear=True)

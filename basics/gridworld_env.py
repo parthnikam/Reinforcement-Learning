@@ -27,37 +27,101 @@ VERTICAL = "\u2503"
 HORIZONTAL = "\u2501"
 
 
+DEFAULT_LAYOUTS = [
+    {
+        "obstacles": {
+            (1, 1), (1, 2), (1, 5),
+            (2, 5),
+            (3, 1), (3, 2), (3, 3),
+            (4, 3),
+            (5, 0), (5, 5),
+        },
+        "bonus_rewards": {
+            (0, 5): 10,
+            (2, 2): 10,
+            (4, 5): 10,
+            (6, 1): 10,
+        },
+    },
+    {
+        "obstacles": {
+            (0, 3), (1, 1), (1, 3), (1, 5),
+            (2, 1), (2, 5),
+            (3, 1), (3, 2), (3, 3), (3, 5),
+            (4, 5), (5, 0), (5, 2), (5, 3),
+        },
+        "bonus_rewards": {
+            (0, 6): 10,
+            (2, 3): 10,
+            (4, 1): 10,
+            (6, 5): 10,
+        },
+    },
+    {
+        "obstacles": {
+            (1, 0), (1, 1), (1, 2), (1, 4),
+            (2, 4), (2, 5),
+            (3, 1), (3, 2), (3, 4),
+            (4, 1), (4, 6),
+            (5, 3), (5, 4), (5, 5),
+        },
+        "bonus_rewards": {
+            (0, 2): 10,
+            (2, 0): 10,
+            (4, 4): 10,
+            (6, 6): 10,
+        },
+    },
+    {
+        "obstacles": {
+            (0, 1), (0, 5),
+            (1, 3), (1, 5),
+            (2, 1), (2, 3), (2, 5),
+            (3, 1), (3, 5),
+            (4, 1), (4, 3), (4, 5),
+            (5, 1), (5, 3),
+            (6, 3),
+        },
+        "bonus_rewards": {
+            (0, 6): 10,
+            (3, 3): 10,
+            (5, 5): 10,
+            (6, 0): 10,
+        },
+    },
+]
+
+
 class GridWorldEnv(gym.Env):
     def __init__(
         self,
         size: int = 7,
         obstacles: Optional[set[tuple[int, int]]] = None,
         bonus_rewards: Optional[dict[tuple[int, int], float]] = None,
+        layouts: Optional[list[dict]] = None,
     ):
         self.size = size
-        raw_obstacles = obstacles or {
-            (1, 1), (1, 2), (1, 5),
-            (2, 5),
-            (3, 1), (3, 2), (3, 3),
-            (4, 3),
-            (5, 0), (5, 5),
-        }
-        raw_bonus_rewards = bonus_rewards or {
-            (0, 5): 0.25,
-            (2, 2): 0.50,
-            (4, 5): 0.25,
-            (6, 1): 0.50,
-        }
-        self.obstacles = {
-            location
-            for location in raw_obstacles
-            if self._in_bounds(location)
-        }
-        self.bonus_rewards = {
-            location: reward
-            for location, reward in raw_bonus_rewards.items()
-            if self._in_bounds(location) and location not in self.obstacles
-        }
+        raw_layouts = layouts or DEFAULT_LAYOUTS
+        if obstacles is not None or bonus_rewards is not None:
+            raw_layouts = [
+                {
+                    "obstacles": obstacles or set(),
+                    "bonus_rewards": bonus_rewards or {},
+                }
+            ]
+
+        self.layouts = [self._sanitize_layout(layout) for layout in raw_layouts]
+        self.layout_id = 0
+        self.obstacles = set()
+        self.bonus_rewards = {}
+        self._all_bonus_locations = sorted(
+            {
+                location
+                for layout in self.layouts
+                for location in layout["bonus_rewards"]
+            }
+        )
+        self._apply_layout(self.layout_id)
         self._remaining_bonus_locations = set(self.bonus_rewards)
 
         self._agent_location = np.array([-1, -1], dtype=np.int32)
@@ -67,7 +131,8 @@ class GridWorldEnv(gym.Env):
             {
                 "agent": gym.spaces.Box(0, size - 1, shape=(2,), dtype=int),
                 "target": gym.spaces.Box(0, size - 1, shape=(2,), dtype=int),
-                "bonuses": gym.spaces.MultiBinary(len(self.bonus_rewards)),
+                "bonuses": gym.spaces.MultiBinary(len(self._all_bonus_locations)),
+                "layout_id": gym.spaces.Discrete(len(self.layouts)),
             }
         )
         self.action_space = gym.spaces.Discrete(4)
@@ -82,11 +147,30 @@ class GridWorldEnv(gym.Env):
         row, col = location
         return 0 <= row < self.size and 0 <= col < self.size
 
+    def _sanitize_layout(self, layout: dict) -> dict:
+        obstacles = {
+            location
+            for location in layout.get("obstacles", set())
+            if self._in_bounds(location)
+        }
+        bonus_rewards = {
+            location: reward
+            for location, reward in layout.get("bonus_rewards", {}).items()
+            if self._in_bounds(location) and location not in obstacles
+        }
+        return {"obstacles": obstacles, "bonus_rewards": bonus_rewards}
+
+    def _apply_layout(self, layout_id: int) -> None:
+        self.layout_id = layout_id
+        layout = self.layouts[self.layout_id]
+        self.obstacles = set(layout["obstacles"])
+        self.bonus_rewards = dict(layout["bonus_rewards"])
+
     def _get_obs(self):
         bonus_mask = np.array(
             [
                 location in self._remaining_bonus_locations
-                for location in self.bonus_rewards
+                for location in self._all_bonus_locations
             ],
             dtype=np.int8,
         )
@@ -94,6 +178,7 @@ class GridWorldEnv(gym.Env):
             "agent": self._agent_location,
             "target": self._target_location,
             "bonuses": bonus_mask,
+            "layout_id": self.layout_id,
         }
 
     def _get_info(self):
@@ -105,6 +190,12 @@ class GridWorldEnv(gym.Env):
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)
+        if options and "layout_id" in options:
+            layout_id = int(options["layout_id"]) % len(self.layouts)
+        else:
+            layout_id = int(self.np_random.integers(0, len(self.layouts)))
+
+        self._apply_layout(layout_id)
         self._remaining_bonus_locations = set(self.bonus_rewards)
 
         open_cells = [
@@ -139,17 +230,16 @@ class GridWorldEnv(gym.Env):
         terminated = np.array_equal(self._agent_location, self._target_location)
         truncated = False
 
-        reward = -0.03
         if bumped_wall:
-            reward -= 0.20
-
-        agent_cell = tuple(int(x) for x in self._agent_location)
-        if agent_cell in self._remaining_bonus_locations:
-            reward += self.bonus_rewards[agent_cell]
-            self._remaining_bonus_locations.remove(agent_cell)
-
-        if terminated:
-            reward += 1.0
+            reward = -10
+        elif terminated:
+            reward = 25
+        else:
+            reward = -1
+            agent_cell = tuple(int(x) for x in self._agent_location)
+            if agent_cell in self._remaining_bonus_locations:
+                reward = self.bonus_rewards[agent_cell]
+                self._remaining_bonus_locations.remove(agent_cell)
 
         info = self._get_info()
         info["bumped_wall"] = bumped_wall
