@@ -5,6 +5,7 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 from tqdm import trange
+from gymnasium.envs.box2d.lunar_lander import FPS, LEG_DOWN, SCALE, VIEWPORT_H, VIEWPORT_W
 
 try:
     from .policy import HeuristicLanderPolicy, load_policy_or_default
@@ -22,17 +23,81 @@ ACTION_NAMES = {
 DEFAULT_POLICY_PATH = Path(__file__).with_name("lander_policy.json")
 
 
-def make_lunar_lander(render_mode: str = "human"):
+class RandomTopStartWrapper(gym.Wrapper):
+    def __init__(self, env, x_range: float = 0.85):
+        super().__init__(env)
+        self.x_range = x_range
+
+    def reset(self, *, seed: int | None = None, options: dict | None = None):
+        observation, info = self.env.reset(seed=seed, options=options)
+        core_env = self.env.unwrapped
+        if not hasattr(core_env, "lander") or core_env.lander is None:
+            return observation, info
+
+        half_width = VIEWPORT_W / SCALE / 2
+        center_x = half_width
+        top_y = VIEWPORT_H / SCALE
+        normalized_x = core_env.np_random.uniform(-self.x_range, self.x_range)
+        target_x = center_x + normalized_x * half_width
+        delta_x = target_x - core_env.lander.position.x
+        delta_y = top_y - core_env.lander.position.y
+
+        core_env.lander.position = (target_x, top_y)
+        core_env.lander.linearVelocity = (
+            core_env.np_random.uniform(-0.5, 0.5),
+            core_env.np_random.uniform(-0.2, 0.2),
+        )
+        core_env.lander.angularVelocity = core_env.np_random.uniform(-0.05, 0.05)
+        core_env.lander.angle = 0.0
+
+        for leg in core_env.legs:
+            leg.position = (leg.position.x + delta_x, leg.position.y + delta_y)
+            leg.linearVelocity = core_env.lander.linearVelocity
+            leg.angularVelocity = 0.0
+            leg.ground_contact = False
+
+        core_env.prev_shaping = None
+        return self._get_observation(), info
+
+    def _get_observation(self):
+        core_env = self.env.unwrapped
+        pos = core_env.lander.position
+        vel = core_env.lander.linearVelocity
+        state = [
+            (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2),
+            (pos.y - (core_env.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2),
+            vel.x * (VIEWPORT_W / SCALE / 2) / FPS,
+            vel.y * (VIEWPORT_H / SCALE / 2) / FPS,
+            core_env.lander.angle,
+            20.0 * core_env.lander.angularVelocity / FPS,
+            1.0 if core_env.legs[0].ground_contact else 0.0,
+            1.0 if core_env.legs[1].ground_contact else 0.0,
+        ]
+        return np.array(state, dtype=np.float32)
+
+
+def make_lunar_lander(render_mode: str = "human", random_start: bool = True):
     try:
-        return gym.make("LunarLander-v3", render_mode=render_mode, continuous=False, gravity=-5.0,
-                enable_wind=False, wind_power=15.0, turbulence_power=1.5)
+        env = gym.make(
+            "LunarLander-v3",
+            render_mode=render_mode,
+            continuous=False,
+            gravity=-10.0,
+            enable_wind=False,
+            wind_power=15.0,
+            turbulence_power=1.5,
+        )
     except gym.error.VersionNotFound:
-        return gym.make("LunarLander-v2", render_mode=render_mode)
+        env = gym.make("LunarLander-v2", render_mode=render_mode)
     except gym.error.DependencyNotInstalled as error:
         raise SystemExit(
             "LunarLander needs Box2D. Install it with:\n"
             '  pip install swig "gymnasium[box2d]"'
         ) from error
+
+    if random_start:
+        env = RandomTopStartWrapper(env)
+    return env
 
 
 def choose_agent_action(observation, policy: HeuristicLanderPolicy) -> int:
