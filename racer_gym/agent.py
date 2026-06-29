@@ -17,9 +17,9 @@ except ImportError:
 
 @dataclass
 class PPOConfig:
-    rollout_steps: int = 2048
+    rollout_steps: int = 1024
     update_epochs: int = 4
-    batch_size: int = 64
+    batch_size: int = 128
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_coef: float = 0.2
@@ -79,6 +79,7 @@ class RacingAgent:
         seed: int | None = None,
         model_path: Path | None = None,
         config: PPOConfig | None = None,
+        load_existing: bool = True,
     ) -> None:
         self.env = env
         self.policy = policy if policy is not None else PPOPolicy()
@@ -90,32 +91,39 @@ class RacingAgent:
             torch.manual_seed(seed)
 
         self.model_path = model_path
-        if model_path is not None and model_path.exists():
+        if load_existing and model_path is not None and model_path.exists():
             self.load(model_path)
 
     def act(self, observation: np.ndarray, deterministic: bool = True) -> np.ndarray:
+        self.policy.model.eval()
         processed_observation = preprocess_observation(observation)
         return self.policy.choose_action(processed_observation, deterministic=deterministic)
 
     def train(self, episodes: int, max_steps: int, seed: int | None = None) -> None:
+        self.policy.model.train()
         buffer = RolloutBuffer()
         global_step = 0
+        last_observation = None
+        last_done = True
 
         for episode in range(1, episodes + 1):
             reset_seed = None if seed is None else seed + episode - 1
-            observation, info = self.env.reset(seed=reset_seed)
+            observation, _ = self.env.reset(seed=reset_seed)
             total_reward = 0.0
+            last_observation = observation
+            last_done = False
 
             for step in range(1, max_steps + 1):
-                action, log_prob, value = self._sample_training_action(observation)
-                next_observation, reward, terminated, truncated, info = self.env.step(action)
+                processed_observation = preprocess_observation(observation)
+                action, log_prob, value = self._sample_training_action(processed_observation)
+                next_observation, reward, terminated, truncated, _ = self.env.step(action)
                 shaped_reward = self._shape_reward(float(reward), action)
                 done = terminated or truncated
                 total_reward += float(reward)
                 global_step += 1
 
                 buffer.add(
-                    observation=preprocess_observation(observation),
+                    observation=processed_observation,
                     action=action,
                     log_prob=log_prob,
                     reward=shaped_reward,
@@ -124,6 +132,8 @@ class RacingAgent:
                 )
 
                 observation = next_observation
+                last_observation = observation
+                last_done = done
 
                 if len(buffer) >= self.config.rollout_steps:
                     self._update_from_rollout(buffer, next_observation=observation, done=done)
@@ -135,8 +145,8 @@ class RacingAgent:
             else:
                 print(f"Training episode {episode}: step limit reached, reward={total_reward:.2f}, total_steps={global_step}")
 
-        if len(buffer) > 0:
-            self._update_from_rollout(buffer, next_observation=observation, done=True)
+        if len(buffer) > 0 and last_observation is not None:
+            self._update_from_rollout(buffer, next_observation=last_observation, done=last_done)
 
         if self.model_path is not None:
             self.save(self.model_path)
@@ -164,8 +174,7 @@ class RacingAgent:
             - idle_penalty
         )
 
-    def _sample_training_action(self, observation: np.ndarray) -> tuple[np.ndarray, float, float]:
-        processed_observation = preprocess_observation(observation)
+    def _sample_training_action(self, processed_observation: np.ndarray) -> tuple[np.ndarray, float, float]:
         observation_tensor = torch.as_tensor(
             processed_observation,
             dtype=torch.float32,

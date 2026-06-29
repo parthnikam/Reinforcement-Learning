@@ -23,7 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--agent", action="store_true", help="Watch the trained agent play.")
     mode.add_argument("--train", action="store_true", help="Train the agent without demo playback.")
 
-    parser.add_argument("--episodes", type=int, default=8000, help="Training episodes.")
+    parser.add_argument("--episodes", type=int, default=100, help="Training episodes.")
     parser.add_argument("--demo-episodes", type=int, default=4, help="Agent demo episodes.")
     parser.add_argument("--max-steps", type=int, default=100, help="Maximum steps per episode.")
     parser.add_argument("--delay", type=float, default=0.20, help="Delay between agent moves.")

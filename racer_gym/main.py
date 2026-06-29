@@ -13,20 +13,26 @@ except ImportError:
 
 
 DEFAULT_MODEL_PATH = Path(__file__).with_name("racer_ppo.pt")
-DEFAULT_EPISODES = 10
+DEFAULT_EPISODES = 100
 DEFAULT_MAX_STEPS = 4000
 DEFAULT_AGENT_DELAY = 0.0
 DEFAULT_SEED = None
 DEFAULT_PPO_CONFIG = PPOConfig()
 
 
-def make_env(render_mode: str | None, seed: int | None = None):
+def make_env(
+    render_mode: str | None,
+    seed: int | None = None,
+    domain_randomize: bool = False,
+):
     env = gym.make(
         "CarRacing-v3",
-        domain_randomize=True,
+        domain_randomize=domain_randomize,
         continuous=True,
         render_mode=render_mode,
     )
+    if seed is not None:
+        env.action_space.seed(seed)
     return env
 
 
@@ -65,7 +71,7 @@ def run_player_game(episodes: int, max_steps: int, seed: int | None) -> None:
     try:
         for episode in range(1, episodes + 1):
             reset_seed = None if seed is None else seed + episode - 1
-            observation, info = env.reset(seed=reset_seed)
+            observation, _ = env.reset(seed=reset_seed)
             total_reward = 0.0
 
             for step in range(1, max_steps + 1):
@@ -73,7 +79,7 @@ def run_player_game(episodes: int, max_steps: int, seed: int | None) -> None:
                     return
 
                 action = get_player_action()
-                observation, reward, terminated, truncated, info = env.step(action)
+                observation, reward, terminated, truncated, _ = env.step(action)
                 total_reward += float(reward)
                 clock.tick(60)
 
@@ -100,7 +106,7 @@ def run_agent_game(
     try:
         for episode in range(1, episodes + 1):
             reset_seed = None if seed is None else seed + episode - 1
-            observation, info = env.reset(seed=reset_seed)
+            observation, _ = env.reset(seed=reset_seed)
             total_reward = 0.0
 
             for step in range(1, max_steps + 1):
@@ -108,7 +114,7 @@ def run_agent_game(
                     return
 
                 action = agent.act(observation, deterministic=True)
-                observation, reward, terminated, truncated, info = env.step(action)
+                observation, reward, terminated, truncated, _ = env.step(action)
                 total_reward += float(reward)
 
                 if delay > 0:
@@ -129,9 +135,16 @@ def train_agent(
     seed: int | None,
     model_path: Path,
     config: PPOConfig,
+    load_existing: bool = True,
 ) -> RacingAgent:
-    env = make_env(render_mode=None, seed=seed)
-    agent = RacingAgent(env, seed=seed, model_path=model_path, config=config)
+    env = make_env(render_mode=None, seed=seed, domain_randomize=False)
+    agent = RacingAgent(
+        env,
+        seed=seed,
+        model_path=model_path,
+        config=config,
+        load_existing=load_existing,
+    )
 
     try:
         agent.train(episodes=episodes, max_steps=max_steps, seed=seed)
@@ -147,6 +160,15 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--play", action="store_true", help="Play CarRacing yourself.")
     mode.add_argument("--agent", action="store_true", help="Watch the current agent play.")
     mode.add_argument("--train", action="store_true", help="Train the agent.")
+    parser.add_argument("--episodes", type=int, default=DEFAULT_EPISODES)
+    parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL_PATH)
+    parser.add_argument("--rollout-steps", type=int, default=DEFAULT_PPO_CONFIG.rollout_steps)
+    parser.add_argument("--update-epochs", type=int, default=DEFAULT_PPO_CONFIG.update_epochs)
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_PPO_CONFIG.batch_size)
+    parser.add_argument("--learning-rate", type=float, default=DEFAULT_PPO_CONFIG.learning_rate)
+    parser.add_argument("--fresh", action="store_true", help="Train from new weights instead of loading an existing checkpoint.")
     return parser
 
 
@@ -155,25 +177,32 @@ def main() -> None:
 
     if args.play:
         run_player_game(
-            episodes=DEFAULT_EPISODES,
-            max_steps=DEFAULT_MAX_STEPS,
-            seed=DEFAULT_SEED,
+            episodes=args.episodes,
+            max_steps=args.max_steps,
+            seed=args.seed,
         )
     elif args.agent:
         run_agent_game(
-            episodes=DEFAULT_EPISODES,
-            max_steps=DEFAULT_MAX_STEPS,
+            episodes=args.episodes,
+            max_steps=args.max_steps,
             delay=DEFAULT_AGENT_DELAY,
-            seed=DEFAULT_SEED,
-            model_path=DEFAULT_MODEL_PATH,
+            seed=args.seed,
+            model_path=args.model_path,
         )
     elif args.train:
+        config = PPOConfig(
+            rollout_steps=args.rollout_steps,
+            update_epochs=args.update_epochs,
+            batch_size=args.batch_size,
+            learning_rate=args.learning_rate,
+        )
         train_agent(
-            episodes=DEFAULT_EPISODES,
-            max_steps=DEFAULT_MAX_STEPS,
-            seed=DEFAULT_SEED,
-            model_path=DEFAULT_MODEL_PATH,
-            config=DEFAULT_PPO_CONFIG,
+            episodes=args.episodes,
+            max_steps=args.max_steps,
+            seed=args.seed,
+            model_path=args.model_path,
+            config=config,
+            load_existing=not args.fresh,
         )
 
 

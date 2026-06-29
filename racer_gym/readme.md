@@ -5,8 +5,16 @@ from the docs:
 ## Description
 The easiest control task to learn from pixels - a top-down racing environment. The generated track is random every episode. <br/>
 Some indicators are shown at the bottom of the window along with the state RGB buffer. <br/>
-From left to right: true speed, four ABS sensors, steering wheel position, and gyroscope. To play yourself (it’s rather fast for humans), type:<br/>
+From left to right: true speed, four ABS sensors, steering wheel position, and gyroscope.
+
+To play yourself:
 ```python main.py --play```
+
+To train from scratch with the default PPO settings:
+```python main.py --train --fresh --episodes 100 --seed 0```
+
+For a quick code smoke test, shorten the rollout and step count:
+```python main.py --train --fresh --episodes 1 --max-steps 12 --rollout-steps 8 --batch-size 4```
 
 
 ## Action Space

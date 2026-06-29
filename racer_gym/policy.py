@@ -51,20 +51,20 @@ class ActorCriticCNN(nn.Module):
 
     def forward(self, observations: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         features = self.encoder(observations)
-        mean = self.actor_mean(features)
-        std = torch.exp(self.log_std).expand_as(mean)
-        value = self.critic(features).squeeze(-1)
+        mean     = self.actor_mean(features)
+        std      = torch.exp(self.log_std).expand_as(mean)
+        value    = self.critic(features).squeeze(-1)
         return mean, std, value
 
 
 class PPOPolicy:
     def __init__(self, device: str | torch.device | None = None) -> None:
-        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        self.model = ActorCriticCNN().to(self.device)
-        self.action_low = ACTION_LOW.to(self.device)
-        self.action_high = ACTION_HIGH.to(self.device)
+        self.device       = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.model        = ActorCriticCNN().to(self.device)
+        self.action_low   = ACTION_LOW.to(self.device)
+        self.action_high  = ACTION_HIGH.to(self.device)
         self.action_scale = (self.action_high - self.action_low) / 2.0
-        self.action_bias = (self.action_high + self.action_low) / 2.0
+        self.action_bias  = (self.action_high + self.action_low) / 2.0
 
     def choose_action(self, observation: np.ndarray, deterministic: bool = False) -> np.ndarray:
         observation_tensor = torch.as_tensor(observation, dtype=torch.float32, device=self.device).unsqueeze(0)
@@ -74,12 +74,12 @@ class PPOPolicy:
 
     def sample(self, observations: torch.Tensor, deterministic: bool = False) -> PolicyOutput:
         mean, std, value = self.model(observations)
-        distribution = Normal(mean, std)
-        raw_action = mean if deterministic else distribution.rsample()
-        squashed_action = torch.tanh(raw_action)
-        action = squashed_action * self.action_scale + self.action_bias
-        log_prob = self._log_prob(distribution, raw_action, squashed_action)
-        entropy = distribution.entropy().sum(dim=-1)
+        distribution     = Normal(mean, std)
+        raw_action       = mean if deterministic else distribution.rsample()
+        squashed_action  = torch.tanh(raw_action)
+        action           = squashed_action * self.action_scale + self.action_bias
+        log_prob         = self._log_prob(distribution, raw_action, squashed_action)
+        entropy          = distribution.entropy().sum(dim=-1)
         return PolicyOutput(action=action, log_prob=log_prob, entropy=entropy, value=value)
 
     def evaluate_actions(
@@ -88,11 +88,11 @@ class PPOPolicy:
         actions: torch.Tensor,
     ) -> PolicyOutput:
         mean, std, value = self.model(observations)
-        distribution = Normal(mean, std)
-        squashed_action = torch.clamp((actions - self.action_bias) / self.action_scale, -1.0 + EPSILON, 1.0 - EPSILON)
-        raw_action = torch.atanh(squashed_action)
-        log_prob = self._log_prob(distribution, raw_action, squashed_action)
-        entropy = distribution.entropy().sum(dim=-1)
+        distribution     = Normal(mean, std)
+        squashed_action  = torch.clamp((actions - self.action_bias) / self.action_scale, -1.0 + EPSILON, 1.0 - EPSILON)
+        raw_action       = torch.atanh(squashed_action)
+        log_prob         = self._log_prob(distribution, raw_action, squashed_action)
+        entropy          = distribution.entropy().sum(dim=-1)
         return PolicyOutput(action=actions, log_prob=log_prob, entropy=entropy, value=value)
 
     def save(self, path) -> None:
