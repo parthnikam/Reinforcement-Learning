@@ -27,9 +27,9 @@ class PPOConfig:
     entropy_coef: float = 0.01
     learning_rate: float = 2.5e-4
     max_grad_norm: float = 0.5
-    gas_reward_coef: float = 0.01
-    brake_penalty_coef: float = 0.01
-    idle_penalty: float = 0.02
+    gas_reward_coef: float = 0.02
+    brake_penalty_coef: float = 0.05
+    idle_penalty: float = 0.05
     idle_gas_threshold: float = 0.1
     idle_brake_threshold: float = 0.1
 

@@ -37,7 +37,17 @@ class ActorCriticCNN(nn.Module):
         )
         self.actor_mean = nn.Linear(512, action_dim)
         self.critic = nn.Linear(512, 1)
-        self.log_std = nn.Parameter(torch.full((action_dim,), -0.5))
+        self.log_std = nn.Parameter(torch.tensor([-0.3, -0.7, -1.2], dtype=torch.float32))
+        self._initialize_heads()
+
+    def _initialize_heads(self) -> None:
+        nn.init.normal_(self.actor_mean.weight, mean=0.0, std=0.01)
+        nn.init.zeros_(self.critic.weight)
+        nn.init.zeros_(self.critic.bias)
+
+        # Steering starts centered, gas starts open, and brake starts nearly off.
+        with torch.no_grad():
+            self.actor_mean.bias.copy_(torch.tensor([0.0, 0.7, -2.0], dtype=torch.float32))
 
     def forward(self, observations: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         features = self.encoder(observations)
