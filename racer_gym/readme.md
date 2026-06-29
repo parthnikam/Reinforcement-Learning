@@ -1,5 +1,6 @@
 # Race Car Gymnasium
 
+from the docs: 
 
 ## Description
 The easiest control task to learn from pixels - a top-down racing environment. The generated track is random every episode. <br/>
