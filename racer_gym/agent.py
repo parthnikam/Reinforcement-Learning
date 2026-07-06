@@ -159,6 +159,9 @@ class RacingAgent:
     def load(self, path: Path) -> None:
         self.policy.load(path)
 
+    def reset_optimizer(self) -> None:
+        self.optimizer = torch.optim.Adam(self.policy.model.parameters(), lr=self.config.learning_rate)
+
     def _shape_reward(self, reward: float, action: np.ndarray) -> float:
         gas = float(action[1])
         brake = float(action[2])

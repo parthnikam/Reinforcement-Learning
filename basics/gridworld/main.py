@@ -7,10 +7,10 @@ try:
     from .q_agent import GridWorldAgent
     from .training import run_visual_demo, train_gridworld
 except ImportError:
-    from gridworld_env import GridWorldEnv
-    from play import run_player_game
-    from q_agent import GridWorldAgent
-    from training import run_visual_demo, train_gridworld
+    from basics.gridworld.gridworld_env import GridWorldEnv
+    from basics.gridworld.play import run_player_game
+    from basics.gridworld.q_agent import GridWorldAgent
+    from basics.gridworld.training import run_visual_demo, train_gridworld
 
 
 DEFAULT_MODEL_PATH = Path(__file__).with_name("gridworld_agent.pkl")
@@ -42,17 +42,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def create_agent(env: GridWorldEnv) -> GridWorldAgent:
-    return GridWorldAgent(
-        env=env,
-        learning_rate=0.5,
-        discount_factor=0.95,
-        initial_epsilon=1.0,
-        epsilon_decay=0.998,
-        final_epsilon=0.02,
-    )
-
-
 def main() -> None:
     args = build_parser().parse_args()
     env = GridWorldEnv(size=7)
@@ -61,7 +50,14 @@ def main() -> None:
         run_player_game(env, max_steps=args.max_steps, layout_id=args.layout)
         return
 
-    agent = create_agent(env)
+    agent = GridWorldAgent(
+        env=env,
+        learning_rate=0.5,
+        discount_factor=0.95,
+        initial_epsilon=1.0,
+        epsilon_decay=0.998,
+        final_epsilon=0.02,
+    )
     if not args.fresh and agent.load(args.model_path):
         print(f"Loaded saved agent from {args.model_path}")
 

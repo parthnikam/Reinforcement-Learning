@@ -7,8 +7,8 @@ try:
     from .gridworld_env import GridWorldEnv
     from .q_agent import GridWorldAgent
 except ImportError:
-    from gridworld_env import GridWorldEnv
-    from q_agent import GridWorldAgent
+    from basics.gridworld.gridworld_env import GridWorldEnv
+    from basics.gridworld.q_agent import GridWorldAgent
 
 
 def train_gridworld(

@@ -7,7 +7,7 @@ import numpy as np
 try:
     from .gridworld_env import GridWorldEnv
 except ImportError:
-    from gridworld_env import GridWorldEnv
+    from basics.gridworld.gridworld_env import GridWorldEnv
 
 
 class GridWorldAgent:
@@ -30,9 +30,6 @@ class GridWorldAgent:
         self.q_table = defaultdict(lambda: np.zeros(self.env.action_space.n, dtype=np.float32))
         self.episode_rewards = []
         self.episode_td_errors = []
-
-    def _new_q_table(self):
-        return defaultdict(lambda: np.zeros(self.env.action_space.n, dtype=np.float32))
 
     @staticmethod
     def state_to_key(observation: dict) -> tuple[int, ...]:
@@ -89,7 +86,7 @@ class GridWorldAgent:
         with path.open("rb") as file:
             payload = pickle.load(file)
 
-        self.q_table = self._new_q_table()
+        self.q_table = defaultdict(lambda: np.zeros(self.env.action_space.n, dtype=np.float32))
         for state, values in payload.get("q_table", {}).items():
             self.q_table[state] = np.asarray(values, dtype=np.float32)
 

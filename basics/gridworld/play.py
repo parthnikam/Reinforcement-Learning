@@ -1,7 +1,7 @@
 try:
     from .gridworld_env import GridWorldEnv
 except ImportError:
-    from gridworld_env import GridWorldEnv
+    from basics.gridworld.gridworld_env import GridWorldEnv
 
 
 ACTION_BY_INPUT = {

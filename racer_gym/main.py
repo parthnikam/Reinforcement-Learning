@@ -5,6 +5,7 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 import pygame
+import torch
 
 try:
     from .agent import PPOConfig, RacingAgent
@@ -154,12 +155,107 @@ def train_agent(
     return agent
 
 
+def make_training_agent(
+    agent_index: int,
+    seed: int | None,
+    model_path: Path,
+    config: PPOConfig,
+    load_existing: bool,
+) -> tuple[RacingAgent, int | None]:
+    agent_seed = None if seed is None else seed + agent_index
+    env = make_env(render_mode=None, seed=agent_seed, domain_randomize=False)
+    agent = RacingAgent(
+        env,
+        seed=agent_seed,
+        model_path=model_path,
+        config=config,
+        load_existing=load_existing,
+    )
+    agent.model_path = None
+    return agent, agent_seed
+
+
+def average_agent_policy_states(agents: list[RacingAgent]) -> dict[str, torch.Tensor]:
+    if not agents:
+        raise ValueError("At least one agent is required for policy sharing.")
+
+    state_dicts = [agent.policy.model.state_dict() for agent in agents]
+    averaged_state = {}
+    for key in state_dicts[0]:
+        stacked_params = torch.stack([state[key].detach().float().cpu() for state in state_dicts])
+        averaged_state[key] = stacked_params.mean(dim=0)
+    return averaged_state
+
+
+def share_agent_learnings(agents: list[RacingAgent]) -> None:
+    averaged_state = average_agent_policy_states(agents)
+    for agent in agents:
+        device_state = {
+            key: value.to(agent.policy.device)
+            for key, value in averaged_state.items()
+        }
+        agent.policy.model.load_state_dict(device_state)
+        agent.reset_optimizer()
+
+
+def train_multiagent(
+    num_agents: int,
+    share_every: int,
+    episodes: int,
+    max_steps: int,
+    seed: int | None,
+    model_path: Path,
+    config: PPOConfig,
+    load_existing: bool = True,
+) -> None:
+    if num_agents < 2:
+        raise ValueError("--num-agents must be at least 2 for --multiagent.")
+    if share_every < 1:
+        raise ValueError("--share-every must be at least 1.")
+
+    agents_with_seeds = [
+        make_training_agent(
+            agent_index=index,
+            seed=seed,
+            model_path=model_path,
+            config=config,
+            load_existing=load_existing,
+        )
+        for index in range(num_agents)
+    ]
+    agents = [agent for agent, _ in agents_with_seeds]
+
+    try:
+        episodes_completed = 0
+        while episodes_completed < episodes:
+            round_episodes = min(share_every, episodes - episodes_completed)
+            round_number = episodes_completed // share_every + 1
+            print(f"Multi-agent round {round_number}: training {num_agents} agents for {round_episodes} episodes each")
+
+            for index, (agent, agent_seed) in enumerate(agents_with_seeds, start=1):
+                round_seed = None if agent_seed is None else agent_seed + episodes_completed
+                print(f"Agent {index}/{num_agents} local training")
+                agent.train(episodes=round_episodes, max_steps=max_steps, seed=round_seed)
+
+            episodes_completed += round_episodes
+            share_agent_learnings(agents)
+            print(f"Shared policies after {episodes_completed} episodes per agent")
+
+        if model_path is not None:
+            agents[0].save(model_path)
+            print(f"Saved shared PPO model to {model_path}")
+    finally:
+        for agent in agents:
+            agent.env.close()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Play, watch, or train a CarRacing agent.")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--play", action="store_true", help="Play CarRacing yourself.")
     mode.add_argument("--agent", action="store_true", help="Watch the current agent play.")
     mode.add_argument("--train", action="store_true", help="Train the agent.")
+    mode.add_argument("--multiagent", action="store_true", help="Train multiple agents and periodically average their policies.")
     parser.add_argument("--episodes", type=int, default=DEFAULT_EPISODES)
     parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
@@ -168,6 +264,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--update-epochs", type=int, default=DEFAULT_PPO_CONFIG.update_epochs)
     parser.add_argument("--batch-size", type=int, default=DEFAULT_PPO_CONFIG.batch_size)
     parser.add_argument("--learning-rate", type=float, default=DEFAULT_PPO_CONFIG.learning_rate)
+    parser.add_argument("--num-agents", type=int, default=4)
+    parser.add_argument("--share-every", type=int, default=5)
     parser.add_argument("--fresh", action="store_true", help="Train from new weights instead of loading an existing checkpoint.")
     return parser
 
@@ -197,6 +295,23 @@ def main() -> None:
             learning_rate=args.learning_rate,
         )
         train_agent(
+            episodes=args.episodes,
+            max_steps=args.max_steps,
+            seed=args.seed,
+            model_path=args.model_path,
+            config=config,
+            load_existing=not args.fresh,
+        )
+    elif args.multiagent:
+        config = PPOConfig(
+            rollout_steps=args.rollout_steps,
+            update_epochs=args.update_epochs,
+            batch_size=args.batch_size,
+            learning_rate=args.learning_rate,
+        )
+        train_multiagent(
+            num_agents=args.num_agents,
+            share_every=args.share_every,
             episodes=args.episodes,
             max_steps=args.max_steps,
             seed=args.seed,
