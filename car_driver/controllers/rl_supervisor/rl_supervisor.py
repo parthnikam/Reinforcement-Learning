@@ -1,180 +1,156 @@
-import os, sys, subprocess
-try: 
-    import gymnasium as gym
-except ImportError: 
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "gymnasium"])
-    import gymnasium as gym
-
-import numpy as np
-import random
 import math
+import random
+import numpy as np
+import gymnasium as gym
+from gymnasium import spaces
+from stable_baselines3 import PPO
 from controller import Supervisor
 
-class AltinoEndlessEnv(gym.Env):
+class WebotsGoalEnv(gym.Env):
     def __init__(self):
-        super().__init__()
+        super(WebotsGoalEnv, self).__init__()
         
+        # Initialize Webots Supervisor
         self.supervisor = Supervisor()
         self.timestep = int(self.supervisor.getBasicTimeStep())
         
-        # --- ACTION SPACE ---
-        # 0: Up (Accelerate)
-        # 1: Down (Decelerate/Reverse)
-        # 2: Left (Steer Left)
-        # 3: Right (Steer Right)
-        # 4: Space (Brake)
-        self.action_space = gym.spaces.Discrete(5)
-        
-        # --- OBSERVATION SPACE ---
-        # What the AI sees: [Car X, Car Y, Car Yaw (rotation), Current Speed, Current Steering, Goal X, Goal Y]
-        self.observation_space = gym.spaces.Box(low=-10.0, high=10.0, shape=(7,), dtype=np.float32)
-        
-        # --- NODES ---
+        # Get Node References
         self.vehicle = self.supervisor.getFromDef("VEHICLE")
         self.goal = self.supervisor.getFromDef("GOAL")
         
-        # --- ENVIRONMENT SETTINGS ---
-        self.speed = 0.0
-        self.angle = 0.0
-        self.MAX_SPEED = 1.8
-        self.MAX_ANGLE = 0.4
+        # Verify nodes exist before proceeding
+        if self.vehicle is None:
+            raise RuntimeError("CRITICAL: 'VEHICLE' node not found. Ensure you converted it to a Base Node.")
+        if self.goal is None:
+            raise RuntimeError("CRITICAL: 'GOAL' node not found. Check your DEF name in the Scene Tree.")
+            
+        # Field pointers for resetting
+        self.vehicle_translation = self.vehicle.getField("translation")
+        self.vehicle_rotation = self.vehicle.getField("rotation")
+        self.goal_translation = self.goal.getField("translation")
         
-        self.COLLECT_RADIUS = 0.3
-        self.BOARD_LIMIT = 1.8 # For a 4x4 board (-2 to 2), we spawn within 1.8 to avoid walls
+        # Capture original vehicle properties to ensure clean resets
+        self.initial_vehicle_pos = self.vehicle_translation.getSFVec3f()
+        self.initial_vehicle_rot = self.vehicle_rotation.getSFRotation()
         
-        self.step_count = 0
-        self.max_steps = 2000 # End episode if it gets stuck for too long
+        # --- ADJUST ENVIRONMENT CONFIGURATION HERE ---
+        self.ARENA_LIMIT = 0.9          # Geofence boundary (half-width of your arena)
+        self.COLLECT_RADIUS = 0.15      # Distance to trigger goal collection
+        self.MAX_STEPS = 500            # Max actions per episode
+        self.current_step = 0
         
-        # Save start position for resets
-        self.start_translation = self.vehicle.getField("translation").getSFVec3f()
-        self.start_rotation = self.vehicle.getField("rotation").getSFRotation()
-
-    def _respawn_goal(self):
-        """Teleports the goal to a random X/Y coordinate on the board."""
-        new_x = random.uniform(-self.BOARD_LIMIT, self.BOARD_LIMIT)
-        new_y = random.uniform(-self.BOARD_LIMIT, self.BOARD_LIMIT)
+        # --- PENALTY CONFIGURATION ---
+        self.MIN_SPEED_THRESHOLD = 0.15 # Speeds below this are treated as "not taking action"
+        self.IDLE_PENALTY = -0.1       # Penalty per step for staying stationary or idling
         
-        # Keep the original Z (height) so it doesn't sink into the floor
-        current_pos = self.goal.getField("translation").getSFVec3f()
-        self.goal.getField("translation").setSFVec3f([new_x, new_y, current_pos[2]])
+        # Define Action Space: [Speed, Angle]
+        # Speed: [-1.8 to 1.8], Angle: [-0.4 to 0.4]
+        self.action_space = spaces.Box(
+            low=np.array([-1.8, -0.4], dtype=np.float32),
+            high=np.array([1.8, 0.4], dtype=np.float32),
+            dtype=np.float32
+        )
+        
+        # Define Observation Space: [Car_X, Car_Y, Goal_X, Goal_Y]
+        self.observation_space = spaces.Box(
+            low=np.array([-5.0, -5.0, -5.0, -5.0], dtype=np.float32),
+            high=np.array([5.0, 5.0, 5.0, 5.0], dtype=np.float32),
+            dtype=np.float32
+        )
 
     def _get_obs(self):
-        """Gathers data for the neural network."""
-        car_pos = self.vehicle.getField("translation").getSFVec3f()
-        goal_pos = self.goal.getField("translation").getSFVec3f()
-        
-        # Extract the Yaw (Z-axis rotation) from the SFRotation field
-        car_rot = self.vehicle.getField("rotation").getSFRotation()
-        yaw = car_rot[3] if car_rot[2] > 0 else -car_rot[3] 
-        
-        return np.array([
-            car_pos[0], car_pos[1], 
-            yaw, 
-            self.speed, self.angle, 
-            goal_pos[0], goal_pos[1]
-        ], dtype=np.float32)
+        car_pos = self.vehicle_translation.getSFVec3f()
+        goal_pos = self.goal_translation.getSFVec3f()
+        # Return [Car_X, Car_Y, Goal_X, Goal_Y]
+        return np.array([car_pos[0], car_pos[1], goal_pos[0], goal_pos[1]], dtype=np.float32)
 
     def reset(self, seed=None, options=None):
-        """Resets the world at the start of a new training episode."""
         super().reset(seed=seed)
-        self.step_count = 0
-        self.speed = 0.0
-        self.angle = 0.0
         
-        # Reset Vehicle
-        self.vehicle.getField("translation").setSFVec3f(self.start_translation)
-        self.vehicle.getField("rotation").setSFRotation(self.start_rotation)
-        self.vehicle.resetPhysics()
+        # 1. Reset Vehicle back to center with original Z height & rotation
+        self.vehicle_translation.setSFVec3f([0.0, 0.0, self.initial_vehicle_pos[2]])
+        self.vehicle_rotation.setSFRotation(self.initial_vehicle_rot)
+        self.vehicle.resetPhysics() # Stop all physical momentum
         
-        # Randomize the first goal
-        self._respawn_goal()
+        # 2. Spawn Goal at a random location within arena boundaries
+        new_x = random.uniform(-self.ARENA_LIMIT + 0.1, self.ARENA_LIMIT - 0.1)
+        new_y = random.uniform(-self.ARENA_LIMIT + 0.1, self.ARENA_LIMIT - 0.1)
+        current_goal_pos = self.goal_translation.getSFVec3f()
+        self.goal_translation.setSFVec3f([new_x, new_y, current_goal_pos[2]])
         
-        # Step simulation to apply physics resets
+        # Clear customData so car doesn't immediately move on reset
+        self.vehicle.getField("customData").setSFString("0.0,0.0")
+        
+        # Advance 1 physics step to apply resets in Webots
         self.supervisor.step(self.timestep)
         
-        return self._get_obs(), {}
+        self.current_step = 0
+        observation = self._get_obs()
+        info = {}
+        return observation, info
 
     def step(self, action):
-        self.step_count += 1
+        self.current_step += 1
         
-        # --- 1. APPLY ACTION (Mimicking Human Keyboard Input) ---
-        is_steering = False
+        # 1. Write actions to customData
+        speed = float(action[0])
+        angle = float(action[1])
+        self.vehicle.getField("customData").setSFString(f"{speed},{angle}")
         
-        if action == 0:   # UP
-            self.speed += 0.02
-        elif action == 1: # DOWN
-            self.speed -= 0.02
-        elif action == 2: # LEFT
-            self.angle -= 0.05
-            is_steering = True
-        elif action == 3: # RIGHT
-            self.angle += 0.05
-            is_steering = True
-        elif action == 4: # SPACE
-            self.speed = 0.0
-            
-        if not is_steering:
-            self.angle = 0.0
-            
-        # Clamp values
-        self.speed = max(min(self.speed, self.MAX_SPEED), -self.MAX_SPEED)
-        self.angle = max(min(self.angle, self.MAX_ANGLE), -self.MAX_ANGLE)
-        
-        # Send to Altino via custom fields
-        self.vehicle.getField("custom_steering").setSFFloat(float(self.angle))
-        self.vehicle.getField("custom_speed").setSFFloat(float(self.speed))
-        
-        # Advance physics
+        # 2. Run simulation step
         self.supervisor.step(self.timestep)
         
-        # --- 2. CALCULATE REWARDS & COLLISIONS ---
-        reward = -0.05 # Small time penalty to encourage moving fast
+        # 3. Retrieve new state
+        obs = self._get_obs()
+        car_x, car_y, goal_x, goal_y = obs
+        
+        # 4. Calculate distance to goal
+        dist_to_goal = math.sqrt((car_x - goal_x)**2 + (car_y - goal_y)**2)
+        
+        # Base living penalty to encourage finding the fastest path
+        reward = -0.01  
         terminated = False
         truncated = False
         
-        car_pos = self.vehicle.getField("translation").getSFVec3f()
-        goal_pos = self.goal.getField("translation").getSFVec3f()
-        
-        # Check Goal Collection
-        dist_to_goal = math.sqrt((car_pos[0]-goal_pos[0])**2 + (car_pos[1]-goal_pos[1])**2)
-        if dist_to_goal < self.COLLECT_RADIUS:
-            reward += 20.0
-            print(f"Goal Collected! Spawning new goal...", flush=True)
-            self._respawn_goal()
+        # --- Check "Not Taking Action" (Idling) Penalty ---
+        if abs(speed) < self.MIN_SPEED_THRESHOLD:
+            reward += self.IDLE_PENALTY  # Add penalty for staying stationary
             
-        # Check Wall Collisions
-        contact_points = self.vehicle.getContactPoints()
-        for cp in contact_points:
-            if cp.point[2] > 0.02: # Ignore tires on the floor
-                node_id = getattr(cp, 'node_id', getattr(cp, 'nodeId', None))
-                if node_id:
-                    col_node = self.supervisor.getFromId(node_id)
-                    while col_node:
-                        if col_node.getDef() == "ARENA":
-                            reward -= 5.0
-                            terminated = True # End the episode if it crashes into a wall
-                            print("Wall hit! Episode Terminated.", flush=True)
-                            break
-                        col_node = col_node.getParentNode()
-
-        # Timeout
-        if self.step_count >= self.max_steps:
-            truncated = True
-
-        return self._get_obs(), reward, terminated, truncated, {}
-
-# --- QUICK TEST SCRIPT ---
-if __name__ == '__main__':
-    # This block allows you to test the environment without launching the full RL trainer yet.
-    # It will take random actions to ensure the spawning and walls work.
-    print("--- SUPERVISOR ENV INITIATED ---", flush=True)
-    env = AltinoEndlessEnv()
-    obs, _ = env.reset()
-    
-    while True:
-        # Take a completely random action (0 to 4)
-        random_action = env.action_space.sample() 
-        obs, reward, term, trunc, info = env.step(random_action)
+        # --- Check Termination Conditions & Rewards ---
         
-        if term or trunc:
-            env.reset()
+        # A. Hit Walls (Geofencing)
+        if abs(car_x) > self.ARENA_LIMIT or abs(car_y) > self.ARENA_LIMIT:
+            reward = -1.0
+            terminated = True
+            print(f"[Episode End] Hit Wall! Step: {self.current_step}", flush=True)
+            
+        # B. Reached Goal
+        elif dist_to_goal < self.COLLECT_RADIUS:
+            reward = 10.0
+            terminated = True
+            print(f"[Episode End] Goal Reached! Step: {self.current_step}", flush=True)
+            
+        # C. Timeout (Too many steps)
+        elif self.current_step >= self.MAX_STEPS:
+            reward = -1.0
+            truncated = True
+            print(f"[Episode End] Timeout! Max actions reached.", flush=True)
+            
+        info = {}
+        return obs, reward, terminated, truncated, info
+
+# --- Training Loop Execution ---
+if __name__ == "__main__":
+    print("Initializing Webots Gym Environment...", flush=True)
+    env = WebotsGoalEnv()
+    
+    print("Starting PPO Agent Training...", flush=True)
+    # Instantiate PPO model with tensorboard logging
+    model = PPO("MlpPolicy", env, verbose=1, learning_rate=0.0003, tensorboard_log="./ppo_logs/")
+    
+    # Train the model (e.g., 50,000 simulator steps)
+    model.learn(total_timesteps=50000)
+    
+    # Save the trained policy
+    model.save("ppo_altino_model")
+    print("Training Complete! Model saved.", flush=True)
