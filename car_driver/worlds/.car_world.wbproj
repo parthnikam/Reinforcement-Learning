@@ -5,6 +5,5 @@ sceneTreePerspectives: 000000ff00000001000000030000001e000000c000000000010000000
 maximizedDockId: -1
 centralWidgetVisible: 1
 orthographicViewHeight: 1
-textFiles: 0 "controllers/new_controller/new_controller.py" "controllers/rl_supervisor/rl_supervisor.py"
-globalOptionalRendering: DistanceSensorRays
+textFiles: 1 "controllers/new_controller/new_controller.py" "controllers/rl_supervisor/rl_supervisor.py"
 consoles: Console:All:All
