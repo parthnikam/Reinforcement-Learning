@@ -6,6 +6,7 @@ from gymnasium import spaces
 from stable_baselines3 import PPO
 from controller import Supervisor
 
+
 class WebotsGoalEnv(gym.Env):
     def __init__(self):
         super(WebotsGoalEnv, self).__init__()
@@ -20,9 +21,9 @@ class WebotsGoalEnv(gym.Env):
         
         # Verify nodes exist before proceeding
         if self.vehicle is None:
-            raise RuntimeError("CRITICAL: 'VEHICLE' node not found. Ensure you converted it to a Base Node.")
+            raise RuntimeError("CRITICAL: 'VEHICLE' node not found in the Scene Tree. Ensure its DEF name is set to 'VEHICLE'.")
         if self.goal is None:
-            raise RuntimeError("CRITICAL: 'GOAL' node not found. Check your DEF name in the Scene Tree.")
+            raise RuntimeError("CRITICAL: 'GOAL' node not found in the Scene Tree. Ensure its DEF name is set to 'GOAL'.")
             
         # Field pointers for resetting
         self.vehicle_translation = self.vehicle.getField("translation")
@@ -32,6 +33,11 @@ class WebotsGoalEnv(gym.Env):
         # Capture original vehicle properties to ensure clean resets
         self.initial_vehicle_pos = self.vehicle_translation.getSFVec3f()
         self.initial_vehicle_rot = self.vehicle_rotation.getSFRotation()
+        
+        # Initialize Emitter device on Supervisor (Make sure to add an Emitter to rl_supervisor in Webots)
+        self.emitter = self.supervisor.getDevice("emitter")
+        if self.emitter is None:
+            raise RuntimeError("CRITICAL: 'emitter' device not found on supervisor. Please add an Emitter base node to rl_supervisor's children.")
         
         # --- ADJUST ENVIRONMENT CONFIGURATION HERE ---
         self.ARENA_LIMIT = 0.9          # Geofence boundary (half-width of your arena)
@@ -78,8 +84,8 @@ class WebotsGoalEnv(gym.Env):
         current_goal_pos = self.goal_translation.getSFVec3f()
         self.goal_translation.setSFVec3f([new_x, new_y, current_goal_pos[2]])
         
-        # Clear customData so car doesn't immediately move on reset
-        self.vehicle.getField("customData").setSFString("0.0,0.0")
+        # Send zero speed/angle command via Emitter on reset
+        self.emitter.send("0.0,0.0".encode('utf-8'))
         
         # Advance 1 physics step to apply resets in Webots
         self.supervisor.step(self.timestep)
@@ -92,10 +98,11 @@ class WebotsGoalEnv(gym.Env):
     def step(self, action):
         self.current_step += 1
         
-        # 1. Write actions to customData
+        # 1. Send actions to the vehicle via Emitter
         speed = float(action[0])
         angle = float(action[1])
-        self.vehicle.getField("customData").setSFString(f"{speed},{angle}")
+        message = f"{speed},{angle}"
+        self.emitter.send(message.encode('utf-8'))
         
         # 2. Run simulation step
         self.supervisor.step(self.timestep)
@@ -145,7 +152,6 @@ if __name__ == "__main__":
     env = WebotsGoalEnv()
     
     print("Starting PPO Agent Training...", flush=True)
-    # Instantiate PPO model with tensorboard logging
     model = PPO("MlpPolicy", env, verbose=1, learning_rate=0.0003, tensorboard_log="./ppo_logs/")
     
     # Train the model (e.g., 50,000 simulator steps)

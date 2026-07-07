@@ -83,19 +83,31 @@
     
     
 from vehicle import Driver
+import sys
 
-driver = Driver()
-timestep = int(driver.getBasicTimeStep())
+print("--- [ACTUATOR] LAUNCHING VEHICLE CONTROLLER ---", flush=True)
 
-print("--- VEHICLE ACTUATOR ACTIVE ---", flush=True)
+try:
+    driver = Driver()
+    timestep = int(driver.getBasicTimeStep())
+    
+    # Initialize Altino's built-in Receiver
+    receiver = driver.getDevice("receiver")
+    receiver.enable(timestep)
+    
+    print("--- [ACTUATOR] INITIALIZED SUCCESSFULLY WITH RECEIVER ---", flush=True)
+except Exception as e:
+    print(f"--- [ACTUATOR] INITIALIZATION ERROR: {e} ---", flush=True)
+    sys.exit(1)
 
 while driver.step() != -1:
-    # Read the customData string written by the supervisor
-    data = driver.getCustomData()
-    
-    if data:
+    # Check if a training step command packet is available
+    if receiver.getQueueLength() > 0:
+        # Webots automatically converts the data to a Python string
+        data = receiver.getString()
+        receiver.nextPacket()  # Remove packet from the queue
+        
         try:
-            # Expecting string format: "speed,angle"
             speed_str, angle_str = data.split(",")
             speed = float(speed_str)
             angle = float(angle_str)
@@ -103,5 +115,9 @@ while driver.step() != -1:
             # Apply physics commands to Altino
             driver.setCruisingSpeed(speed)
             driver.setSteeringAngle(angle)
-        except ValueError:
-            pass  # Safely handle empty/malformed data on first steps
+        except Exception as e:
+            print(f"[Actuator] Error parsing data: {e}", flush=True)
+ 
+ 
+ 
+ 
