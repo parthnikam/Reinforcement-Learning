@@ -42,7 +42,7 @@ class WebotsGoalEnv(gym.Env):
         # --- ENVIRONMENT CONFIGURATION ---
         self.ARENA_LIMIT = 0.9
         self.COLLECT_RADIUS = 0.15
-        self.MAX_STEPS = 2000
+        self.MAX_STEPS = 1200
         self.current_step = 0
 
         # --- PENALTY CONFIGURATION ---
